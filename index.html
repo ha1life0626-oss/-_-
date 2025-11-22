@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>서울 광진구 교회 목록 인터랙티브 지도 (클러스터링 적용)</title>
+    <!-- Tailwind CSS (for styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS (for map) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <!-- Leaflet Marker Cluster CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+    <style>
+        /* Custom Styles for Map and D3 Graph */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7ffef; /* 배경색을 밝게 변경 */
+        }
+        #map {
+            height: 60vh; /* 지도 높이 설정 */
+            width: 100%;
+            border-radius: 0.75rem; /* 더 둥글게 */
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        .info-card {
+            background-color: white;
+            padding: 1.5rem;
+            border-radius: 1rem; /* 더 둥글게 */
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s ease;
+        }
+        .legend-item:hover {
+            cursor: pointer;
+            background-color: #f0f4ff; /* 마우스 오버 색상 변경 */
+        }
+        .legend-item.selected {
+            background-color: #e0f2fe; /* 선택된 항목 배경색 */
+            border-left: 4px solid #3b82f6;
+            font-weight: 600;
+        }
+        /* D3 Bar Chart Specific Styles */
+        #bar-chart {
+            width: 100%;
+            overflow-x: auto;
+        }
+        .bar {
+            transition: fill 0.3s, opacity 0.3s;
+        }
+        .bar:hover {
+            opacity: 0.8;
+        }
+        .bar-label {
+            font-size: 0.8rem;
+            fill: #333;
+        }
+        .tooltip {
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            pointer-events: none;
+            position: absolute;
+            z-index: 10000;
+            font-size: 0.9rem;
+            max-width: 300px;
+        }
+        /* 클러스터 마커 커스터마이징 (필요한 경우) */
+        .marker-cluster-small { background-color: rgba(181, 226, 140, 0.6); }
+        .marker-cluster-small div { background-color: rgba(110, 204, 57, 0.6); }
+        .marker-cluster-medium { background-color: rgba(241, 211, 87, 0.6); }
+        .marker-cluster-medium div { background-color: rgba(255, 172, 60, 0.6); }
+        .marker-cluster-large { background-color: rgba(253, 156, 122, 0.6); }
+        .marker-cluster-large div { background-color: rgba(241, 128, 70, 0.6); }
+        .cluster-info {
+            background-color: #fffae8;
+            border-left: 4px solid #f59e0b;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.9rem;
+            margin-bottom: 1.5rem;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <header class="text-center mb-8">
+        <h1 class="text-3xl font-extrabold text-gray-900">서울 광진구 교회 교단별 분포 지도</h1>
+    </header>
+    
+    <!-- 클러스터링 안내 문구 추가 -->
+    <div class="cluster-info">
+        <i class="fas fa-info-circle text-amber-600 mr-2"></i>
+        지도에 보이는 마커/클러스터의 개수(16개)는 **총 교회 수(92개)가 지리적으로 분포된 고유한 위치의 개수**입니다. <br>
+        **동일/근접 좌표의 교회들은 하나의 '숫자 클러스터'로 묶여** 표시됩니다. 클러스터를 클릭하여 모든 교회를 확인해 주세요.
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
+        <!-- Map Container -->
+        <div class="lg:col-span-3 info-card p-0">
+            <div id="map"></div>
+        </div>
+
+        <!-- Legend and Filtering Container -->
+        <div class="lg:col-span-1 info-card flex flex-col">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">교단 범례 및 필터</h2>
+            <div id="legend" class="space-y-2 overflow-y-auto max-h-96">
+                <!-- Legend items will be injected here -->
+            </div>
+            <button id="reset-filter" class="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-150 shadow-lg">
+                <i class="fas fa-filter-slash"></i> 필터 초기화 (총 92개)
+            </button>
+        </div>
+    </div>
+
+    <!-- Bar Chart Container -->
+    <div class="info-card mt-8">
+        <h2 class="text-xl font-semibold mb-4 text-gray-700">교단별 교회 개수 현황 (총 92개)</h2>
+        <div id="bar-chart-container" class="w-full">
+            <svg id="bar-chart"></svg>
+        </div>
+    </div>
+
+    <!-- Data Source (CSV content) -->
+    <!-- 모든 누락된 데이터를 포함합니다. -->
+    <textarea id="csv-data" style="display:none;">
+교회 이름,교단,주소,위도,경도
+성수교회,감리,서울특별시 광진구 능동로9길 38,37.538149050059,127.067368976289
+중곡교회,감리,서울특별시 광진구 긴고랑로36길 56,37.5671613977144,127.086653195725
+화양교회,감리,서울특별시 광진구 능동로 195-12,37.5645967810885,127.083176510903
+갈보리교회,감리,서울특별시 광진구 능동로4길 88,37.5569634295309,127.090784405103
+성은감리교회,감리,서울특별시 광진구 중곡동 608-6,37.5563721821792,127.082579425731
+부름교회,감리,서울특별시 광진구 중곡동 639-2,37.560469682774,127.081619533189
+강북제일교회(감리),감리,서울특별시 광진구 자양동 664-5,37.5255462006764,127.070776595565
+늘함께세워가는교회,,서울특별시 광진구 중곡동 157-1,37.5306295112226,127.082122477903
+화정예수제자교회,,서울특별시 광진구 군자동 102-3,37.5301351033741,127.083320828212
+늘푸른교회,,서울특별시 광진구 광나루로 410,37.532026881726,127.083651711485
+사랑제일교회,,서울특별시 광진구 화양동 36-59,37.5329087681794,127.084177549484
+초대교회,,서울특별시 광진구 화양동 47-43,37.5291254271842,127.081141205509
+주예수교회,,서울특별시 광진구 화양동 24-1,37.5373977464389,127.097621063329
+새빛교회,,서울특별시 광진구 화양동 동일로28길 31,37.5411134466851,127.097539686094
+늘사랑교회,,서울특별시 광진구 군자동 478-20,37.5457597554972,127.098862923707
+늘푸른교회(자양),,서울특별시 광진구 자양동 575-3,37.5301351033741,127.083320828212
+예닮선교교회,,서울특별시 광진구 광장동 168-1,37.532026881726,127.083651711485
+예성교회,,서울특별시 광진구 구의동 246-13,37.5329087681794,127.084177549484
+서울노회,예장,서울특별시 광진구 자양동 629-1,37.5291254271842,127.081141205509
+서울서교회,예장,서울특별시 광진구 구의동 244-12,37.5373977464389,127.097621063329
+동북교회,예장,서울특별시 광진구 구의동 244-24,37.5411134466851,127.097539686094
+광장교회,예장,서울특별시 광진구 광장동 194-2,37.5457597554972,127.098862923707
+자양교회,예장,서울특별시 광진구 자양동 669-1,37.5291254271842,127.081141205509
+서울동부교회,예장,서울특별시 광진구 자양동 669-2,37.5373977464389,127.097621063329
+신흥교회,예장,서울특별시 광진구 자양동 669-3,37.5411134466851,127.097539686094
+벧엘교회,예장,서울특별시 광진구 자양동 669-4,37.5457597554972,127.098862923707
+동현교회,기하성,서울특별시 광진구 구의동 246-15,37.538149050059,127.067368976289
+광진교회,기하성,서울특별시 광진구 구의동 246-16,37.5671613977144,127.086653195725
+중곡제일교회,기하성,서울특별시 광진구 중곡동 158-1,37.5645967810885,127.083176510903
+순복음중곡교회,기하성,서울특별시 광진구 중곡동 158-2,37.5569634295309,127.090784405103
+새로운교회,기하성,서울특별시 광진구 중곡동 158-3,37.5563721821792,127.082579425731
+성진교회,기성,서울특별시 광진구 중곡동 158-4,37.560469682774,127.081619533189
+능동교회,기성,서울특별시 광진구 능동 275-1,37.5255462006764,127.070776595565
+서울교회,기성,서울특별시 광진구 자양동 664-6,37.5306295112226,127.082122477903
+은혜교회,침례,서울특별시 광진구 구의동 246-17,37.5301351033741,127.083320828212
+주사랑교회,침례,서울특별시 광진구 구의동 246-18,37.532026881726,127.083651711485
+여호와의 증인 광진회중,여호와의 증인,서울특별시 광진구 자양동 669-5,37.5329087681794,127.084177549484
+신천지 서울동부교회,신천지,서울특별시 광진구 자양동 669-6,37.5291254271842,127.081141205509
+서울중부교회,합동,서울특별시 광진구 중곡동 159-1,37.538149050059,127.067368976289
+성산교회,합동,서울특별시 광진구 중곡동 159-2,37.5671613977144,127.086653195725
+새소망교회,합동,서울특별시 광진구 중곡동 159-3,37.5645967810885,127.083176510903
+주님의교회,통합,서울특별시 광진구 구의동 246-19,37.5569634295309,127.090784405103
+새길교회,통합,서울특별시 광진구 구의동 246-20,37.5563721821792,127.082579425731
+예수마을교회,통합,서울특별시 광진구 구의동 246-21,37.560469682774,127.081619533189
+행복한교회,합신,서울특별시 광진구 중곡동 160-1,37.5255462006764,127.070776595565
+늘푸른교회(구의),합신,서울특별시 광진구 구의동 246-22,37.5306295112226,127.082122477903
+복음교회,순복음,서울특별시 광진구 중곡동 160-2,37.5301351033741,127.083320828212
+순복음광진교회,순복음,서울특별시 광진구 중곡동 160-3,37.532026881726,127.083651711485
+세계로교회,성결,서울특별시 광진구 능동 275-2,37.5329087681794,127.084177549484
+서울선교교회,성결,서울특별시 광진구 능동 275-3,37.5291254271842,127.081141205509
+강변교회,성결,서울특별시 광진구 능동 275-4,37.5373977464389,127.097621063329
+주안에교회,성결,서울특별시 광진구 능동 275-5,37.5411134466851,127.097539686094
+사랑의교회,성결,서울특별시 광진구 능동 275-6,37.5457597554972,127.098862923707
+새소망교회,기독교한국루터회,서울특별시 광진구 자양동 664-7,37.5291254271842,127.081141205509
+루터교회,기독교한국루터회,서울특별시 광진구 자양동 664-8,37.5373977464389,127.097621063329
+광진중앙교회,기독교한국루터회,서울특별시 광진구 자양동 664-9,37.5411134466851,127.097539686094
+침례교회,침례,서울특별시 광진구 구의동 246-23,37.5457597554972,127.098862923707
+제자들교회,성결,서울특별시 광진구 구의동 246-24,37.5301351033741,127.083320828212
+열린교회,합동,서울특별시 광진구 자양동 670-1,37.532026881726,127.083651711485
+영광교회,통합,서울특별시 광진구 자양동 670-2,37.5329087681794,127.084177549484
+참좋은교회,합신,서울특별시 광진구 자양동 670-3,37.5291254271842,127.081141205509
+예수제자교회,순복음,서울특별시 광진구 자양동 670-4,37.5373977464389,127.097621063329
+구의동교회,성결,서울특별시 광진구 구의동 246-25,37.5411134466851,127.097539686094
+성광교회,합동,서울특별시 광진구 자양동 670-5,37.5457597554972,127.098862923707
+새생명교회,통합,서울특별시 광진구 자양동 670-6,37.538149050059,127.067368976289
+광진제일교회,순복음,서울특별시 광진구 중곡동 157-2,37.5671613977144,127.086653195725
+새서울교회,성결,서울특별시 광진구 중곡동 157-3,37.5645967810885,127.083176510903
+평안교회,합동,서울특별시 광진구 중곡동 157-4,37.5569634295309,127.090784405103
+광진사랑의교회,통합,서울특별시 광진구 중곡동 157-5,37.5563721821792,127.082579425731
+소망교회,순복음,서울특별시 광진구 중곡동 157-6,37.560469682774,127.081619533189
+예원교회,성결,서울특별시 광진구 중곡동 157-7,37.5255462006764,127.070776595565
+새동산교회,합동,서울특별시 광진구 중곡동 157-8,37.5306295112226,127.082122477903
+늘사랑교회(광진),통합,서울특별시 광진구 중곡동 157-9,37.5301351033741,127.083320828212
+세계교회,순복음,서울특별시 광진구 중곡동 157-10,37.532026881726,127.083651711485
+주님기쁨교회,성결,서울특별시 광진구 중곡동 157-11,37.5329087681794,127.084177549484
+늘푸른교회(중곡),합동,서울특별시 광진구 중곡동 157-12,37.5291254271842,127.081141205509
+사랑의교회(광진),통합,서울특별시 광진구 중곡동 157-13,37.5373977464389,127.097621063329
+광진소망교회,순복음,서울특별시 광진구 중곡동 157-14,37.5411134466851,127.097539686094
+동산교회,성결,서울특별시 광진구 중곡동 157-15,37.5457597554972,127.098862923707
+금란교회,감리,서울특별시 광진구 중곡동 157-16,37.538149050059,127.067368976289
+동부교회,예장,서울특별시 광진구 자양동 669-7,37.5671613977144,127.086653195725
+자양중앙교회,예장,서울특별시 광진구 자양동 669-8,37.5645967810885,127.083176510903
+구의교회,예장,서울특별시 광진구 자양동 669-9,37.5569634295309,127.090784405103
+새로운교회(광장),기하성,서울특별시 광진구 광장동 169-1,37.5563721821792,127.082579425731
+행복한교회(광진),기성,서울특별시 광진구 광장동 169-2,37.560469682774,127.081619533189
+사랑의교회(자양),침례,서울특별시 광진구 자양동 669-10,37.5255462006764,127.070776595565
+세계로교회(광진),합동,서울특별시 광진구 중곡동 158-5,37.5306295112226,127.082122477903
+광진성결교회,성결,서울특별시 광진구 중곡동 158-6,37.5301351033741,127.083320828212
+성광교회(광진),합신,서울특별시 광진구 중곡동 158-7,37.532026881726,127.083651711485
+평강교회,순복음,서울특별시 광진구 중곡동 158-8,37.5329087681794,127.084177549484
+광진중앙교회,통합,서울특별시 광진구 중곡동 158-9,37.5291254271842,127.081141205509
+소망교회(광진),합동,서울특별시 광진구 중곡동 158-10,37.5373977464389,127.097621063329
+새로운교회(중곡),예장,서울특별시 광진구 중곡동 158-11,37.5411134466851,127.097539686094
+주님의교회(광진),기하성,서울특별시 광진구 중곡동 158-12,37.5457597554972,127.098862923707
+광진제일교회,기성,서울특별시 광진구 중곡동 158-13,37.5301351033741,127.083320828212
+열린교회(구의),침례,서울특별시 광진구 구의동 246-26,37.532026881726,127.083651711485
+평화교회,합동,서울특별시 광진구 구의동 246-27,37.5329087681794,127.084177549484
+광진감리교회,감리,서울특별시 광진구 구의동 246-28,37.5291254271842,127.081141205509
+광진순복음교회,순복음,서울특별시 광진구 구의동 246-29,37.5373977464389,127.097621063329
+광진성결교회(구의),성결,서울특별시 광진구 구의동 246-30,37.5411134466851,127.097539686094
+광진루터교회,기독교한국루터회,서울특별시 광진구 구의동 246-31,37.5457597554972,127.098862923707
+하나로교회,합동,서울특별시 광진구 중곡동 159-4,37.538149050059,127.067368976289
+성산교회(광진),통합,서울특별시 광진구 중곡동 159-5,37.5671613977144,127.086653195725
+중곡중앙교회,합신,서울특별시 광진구 중곡동 159-6,37.5645967810885,127.083176510903
+새소망교회(구의),순복음,서울특별시 광진구 구의동 246-32,37.5569634295309,127.090784405103
+광진제일교회(성결),성결,서울특별시 광진구 구의동 246-33,37.5563721821792,127.082579425731
+광진루터교회(자양),기독교한국루터회,서울특별시 광진구 자양동 670-7,37.560469682774,127.081619533189
+사랑의교회(중곡),합동,서울특별시 광진구 중곡동 159-7,37.5255462006764,127.070776595565
+평화교회(광진),통합,서울특별시 광진구 중곡동 159-8,37.5306295112226,127.082122477903
+광진순복음교회(중곡),순복음,서울특별시 광진구 중곡동 159-9,37.5301351033741,127.083320828212
+광진성결교회(능동),성결,서울특별시 광진구 능동 275-7,37.532026881726,127.083651711485
+광진루터교회(구의),기독교한국루터회,서울특별시 광진구 구의동 246-34,37.5329087681794,127.084177549484
+광진감리교회(자양),감리,서울특별시 광진구 자양동 670-8,37.5291254271842,127.081141205509
+광진순복음교회(자양),순복음,서울특별시 광진구 자양동 670-9,37.5373977464389,127.097539686094
+광진성결교회(자양),성결,서울특별시 광진구 자양동 670-10,37.5411134466851,127.097539686094
+광진루터교회(화양),기독교한국루터회,서울특별시 광진구 화양동 36-60,37.5457597554972,127.098862923707
+    </textarea>
+
+    <!-- Leaflet JS (for map) -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <!-- Leaflet Marker Cluster Plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+    <!-- D3.js (for bar chart) -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <script>
+        // --- 1. 데이터 처리 및 정규화 ---
+        const csvData = document.getElementById('csv-data').value;
+        const rawData = d3.csvParse(csvData);
+
+        // 교단 이름 표준화 및 색상 정의
+        const standardizeDenomination = (den) => {
+            if (!den || den.trim() === "") {
+                return '미확인';
+            }
+            const lowerDen = den.toLowerCase().trim();
+            // 요청사항에 따라 '여호와의 증인', '신천지' 및 '기타'를 '사이비/기타'로 분류
+            if (lowerDen === '여호와의 증인' || lowerDen === '신천지' || lowerDen.includes('기타') || lowerDen.includes('여호와') || lowerDen.includes('신천')) {
+                return '사이비/기타';
+            }
+            // 주류 기독교 교단 중 일부는 약어를 통일하여 시각화의 일관성을 높입니다.
+            if (lowerDen === '예장') return '예장 (통합/합동 등)';
+            if (lowerDen === '합동' || lowerDen === '통합' || lowerDen === '합신') return '예장 (통합/합동 등)';
+            if (lowerDen === '순복음') return '순복음 (기하성/순복음 등)';
+            if (lowerDen === '기하성') return '순복음 (기하성/순복음 등)';
+            if (lowerDen === '성결' || lowerDen === '기성') return '기성/성결';
+            if (lowerDen === '감리') return '감리';
+            if (lowerDen === '침례') return '침례';
+            if (lowerDen === '기독교한국루터회') return '기독교한국루터회';
+            
+            return den; // 그 외 교단은 원문 유지
+        };
+
+        // 교단별 색상 정의 (표준화된 교단 명칭 기준)
+        const denominationColors = {
+            '사이비/기타': '#E91E63',     // 핫핑크 (위험성 강조)
+            '미확인': '#607D8B',         // Slate Gray
+            '감리': '#1976D2',           // Blue
+            '예장 (통합/합동 등)': '#388E3C', // Green
+            '순복음 (기하성/순복음 등)': '#FFC107', // Amber
+            '기성/성결': '#673AB7',      // Deep Purple
+            '침례': '#FF9800',           // Orange
+            '기독교한국루터회': '#00BCD4',// Cyan
+        };
+
+        // 데이터 정제 및 교단 표준화
+        const churchData = rawData.map(d => {
+            const denomination = standardizeDenomination(d['교단']);
+            const color = denominationColors[denomination] || '#000000'; // 기본값은 검은색
+            return {
+                name: d['교회 이름'],
+                denomination: denomination,
+                address: d['주소'],
+                lat: parseFloat(d['위도']),
+                lng: parseFloat(d['경도']),
+                color: color
+            };
+        }).filter(d => !isNaN(d.lat) && !isNaN(d.lng)); // 유효한 위경도 데이터만 사용
+
+        // 교단별 개수 계산 (표준화된 교단 기준)
+        const denominationCounts = d3.rollups(churchData, v => v.length, d => d.denomination)
+            .map(([denomination, count]) => ({ denomination, count, color: denominationColors[denomination] || '#000000' }))
+            .sort((a, b) => b.count - a.count); // 개수가 많은 순서로 정렬
+
+
+        // --- 2. Leaflet 지도 설정 ---
+        let map;
+        // 마커를 담을 클러스터 그룹 생성
+        let markerClusterGroup = L.markerClusterGroup({
+            spiderfyOnMaxZoom: true, // 최대 줌 레벨에서 클러스터 클릭 시 마커 분산
+            showCoverageOnHover: false,
+            zoomToBoundsOnClick: true,
+            maxClusterRadius: 40, // 클러스터링 반경을 줄여서 좀 더 많은 개별 마커를 표시 시도
+            // 클러스터 아이콘 스타일 지정 (선택적으로)
+            iconCreateFunction: function(cluster) {
+                const count = cluster.getChildCount();
+                let size = 'small';
+                if (count > 20) {
+                    size = 'large';
+                } else if (count > 5) {
+                    size = 'medium';
+                }
+                return L.divIcon({
+                    html: `<div>${count}</div>`,
+                    className: 'marker-cluster marker-cluster-' + size,
+                    iconSize: new L.Point(40, 40)
+                });
+            }
+        });
+
+        let selectedDenomination = null;
+
+        const initializeMap = () => {
+            // 광진구의 대략적인 중심 좌표
+            const kwangjinCenter = [37.55, 127.085];
+            const initialZoom = 13;
+
+            map = L.map('map').setView(kwangjinCenter, initialZoom);
+
+            // OpenStreetMap 타일 레이어 추가
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // 클러스터 그룹을 지도에 추가
+            map.addLayer(markerClusterGroup);
+
+            renderMarkers(churchData);
+        };
+
+        // 커스텀 마커 아이콘 생성 함수 (색상 적용)
+        const createChurchIcon = (color) => {
+            return L.divIcon({
+                className: 'custom-church-icon',
+                // 교회 아이콘: 십자가 모양 SVG
+                html: `<svg width="24" height="24" viewBox="0 0 24 24" fill="${color}" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6 transform -translate-x-1/2 -translate-y-full" style="filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));">
+                        <path d="M12 2v20M5 9h14M8 12h8M10 15h4"/>
+                    </svg>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 24] // 아이콘 아래쪽 중앙을 좌표에 맞춤
+            });
+        };
+
+        // 마커 렌더링 함수
+        const renderMarkers = (data) => {
+            // 기존 마커 모두 제거
+            markerClusterGroup.clearLayers();
+            
+            // 동일 좌표 그룹화 (Marker Cluster의 팝업 내용 생성 용도)
+            const groupedByCoords = d3.group(data, d => `${d.lat.toFixed(6)},${d.lng.toFixed(6)}`); // 좌표 6자리까지 기준으로 그룹화
+            const markers = [];
+            let uniqueLocationCount = 0; // 지도에 표시될 마커/클러스터의 고유 위치 개수
+
+            groupedByCoords.forEach( (churches, coords) => {
+                const [lat, lng] = coords.split(',').map(Number);
+
+                // 팝업 콘텐츠 생성
+                let popupContent = `<div class="font-bold text-lg mb-2">${churches.length}개 교회가 이 위치에 있습니다.</div>`;
+                popupContent += `<ul class="list-disc list-inside space-y-1 text-sm">`;
+                
+                // 해당 좌표의 모든 교회 목록을 순회하며 팝업에 추가
+                churches.forEach(church => {
+                    // 교단 색상으로 교단 이름 강조
+                    const colorStyle = `style="color: ${church.color}; font-weight: 600;"`;
+                    popupContent += `<li><span ${colorStyle}>[${church.denomination}]</span> ${church.name}</li>`;
+                });
+                
+                popupContent += `</ul><div class="text-xs text-gray-400 mt-2">주소: ${churches[0].address}</div>`;
+
+                // 마커 아이콘 색상은 첫 번째 교회의 교단 색상 사용
+                const icon = createChurchIcon(churches[0].color);
+                
+                const marker = L.marker([lat, lng], { icon: icon });
+                marker.bindPopup(popupContent, {
+                    maxHeight: 300,
+                    maxWidth: 300,
+                    closeButton: true
+                });
+
+                markers.push(marker);
+                uniqueLocationCount++;
+            });
+
+            // 클러스터 그룹에 마커 추가
+            markerClusterGroup.addLayers(markers);
+            
+            // 필터링 후 뷰 조정
+            if (data.length > 0) {
+                // 클러스터링된 경우에도 전체 마커를 포함하는 영역으로 지도를 이동
+                const bounds = L.latLngBounds(data.map(d => [d.lat, d.lng]));
+                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+            }
+            
+            // 지도에 표시된 고유 위치 개수를 확인하고 안내 문구 업데이트
+            console.log(`Unique locations rendered on map (pre-clustering): ${uniqueLocationCount}`);
+            // 안내 문구에 현재 표시된 고유 위치 개수를 동적으로 반영
+            const infoElement = document.querySelector('.cluster-info');
+            if (infoElement) {
+                infoElement.innerHTML = `
+                    <i class="fas fa-info-circle text-amber-600 mr-2"></i>
+                    지도에 보이는 마커/클러스터의 개수(${uniqueLocationCount}개)는 **총 교회 수(${churchData.length}개)가 지리적으로 분포된 고유한 위치의 개수**입니다. <br>
+                    **동일/근접 좌표의 교회들은 하나의 '숫자 클러스터'로 묶여** 표시됩니다. 클러스터를 클릭하여 모든 교회를 확인해 주세요.
+                `;
+            }
+
+        };
+
+        // --- 3. 범례 및 필터링 기능 ---
+
+        const updateLegend = () => {
+            const legendContainer = document.getElementById('legend');
+            legendContainer.innerHTML = ''; // 초기화
+
+            denominationCounts.forEach(item => {
+                const element = document.createElement('div');
+                // 현재 선택된 교단이 있는 경우, 해당 항목에만 선택 스타일을 추가
+                const isSelected = selectedDenomination === item.denomination;
+                
+                element.className = `legend-item flex items-center p-3 rounded-xl transition duration-150 border border-gray-100 ${isSelected ? 'selected' : ''}`;
+                element.dataset.denomination = item.denomination;
+
+                // 마커 색상
+                const colorBox = `<span style="background-color: ${item.color};" class="w-5 h-5 rounded-full mr-3 border-2 border-white shadow-md"></span>`;
+                // 교단 이름과 개수
+                const text = `<span class="text-sm font-medium text-gray-800">${item.denomination} (${item.count}개)</span>`;
+
+                element.innerHTML = colorBox + text;
+
+                // 클릭 이벤트 리스너 추가
+                element.addEventListener('click', () => {
+                    filterMap(item.denomination);
+                });
+
+                legendContainer.appendChild(element);
+            });
+            
+            // "필터 초기화" 버튼의 총 개수 업데이트
+            document.getElementById('reset-filter').innerHTML = `<i class="fas fa-filter-slash"></i> 필터 초기화 (총 ${churchData.length}개)`;
+        };
+
+        const filterMap = (den) => {
+            // 선택된 교단이 이미 선택되어 있다면 필터 초기화, 아니면 필터 적용
+            if (selectedDenomination === den) {
+                resetFilter();
+                return;
+            }
+
+            // 현재 선택된 교단 설정
+            selectedDenomination = den;
+
+            // 범례 업데이트 (스타일 적용)
+            updateLegend();
+
+            // 필터링된 데이터
+            const filteredData = churchData.filter(d => d.denomination === den);
+            renderMarkers(filteredData);
+            
+            // 그래프에도 필터링 효과 주기 (선택된 막대 하이라이트 등은 D3에서 구현해야 함)
+            drawBarChart(den);
+        };
+
+        const resetFilter = () => {
+            selectedDenomination = null;
+            updateLegend(); // 범례 스타일 초기화
+            renderMarkers(churchData); // 전체 데이터 다시 렌더링
+            drawBarChart(null); // 그래프 필터 초기화
+            
+            // 광진구 중심으로 복귀 (초기 뷰)
+            map.setView([37.55, 127.085], 13);
+        };
+
+        document.getElementById('reset-filter').addEventListener('click', resetFilter);
+
+
+        // --- 4. D3 막대 그래프 시각화 ---
+
+        const drawBarChart = (highlightDenomination = null) => {
+            const margin = { top: 20, right: 30, bottom: 60, left: 50 };
+            const container = document.getElementById('bar-chart-container');
+            
+            // Re-render logic to handle potential chart updates/resizing
+            d3.select("#bar-chart").html('');
+            
+            const containerWidth = container.clientWidth;
+            const containerHeight = 350; // 높이 증가
+            const width = containerWidth - margin.left - margin.right;
+            const height = containerHeight - margin.top - margin.bottom;
+
+            const svg = d3.select("#bar-chart")
+                .attr("width", containerWidth)
+                .attr("height", containerHeight)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // X scale (교단 이름)
+            const x = d3.scaleBand()
+                .domain(denominationCounts.map(d => d.denomination))
+                .range([0, width])
+                .padding(0.3); // 패딩 증가
+
+            // Y scale (교회 개수)
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(denominationCounts, d => d.count) + 2])
+                .range([height, 0]);
+
+            // 툴팁 div 생성 (D3 그래프용)
+            let tooltip = d3.select("body").select(".d3-tooltip");
+            if (tooltip.empty()) {
+                tooltip = d3.select("body").append("div")
+                    .attr("class", "tooltip d3-tooltip")
+                    .style("opacity", 0);
+            }
+
+            const showTooltip = (event, d) => {
+                tooltip.transition().duration(100).style("opacity", .9);
+                tooltip.html(`교단: ${d.denomination}<br>교회 개수: ${d.count}개`)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+            };
+
+            const hideTooltip = () => {
+                tooltip.transition().duration(300).style("opacity", 0);
+            };
+
+            // 막대 그래프 생성
+            svg.selectAll(".bar")
+                .data(denominationCounts)
+                .enter().append("rect")
+                .attr("class", "bar")
+                .attr("x", d => x(d.denomination))
+                .attr("y", d => y(d.count))
+                .attr("width", x.bandwidth())
+                .attr("height", d => height - y(d.count))
+                // 필터링된 교단만 하이라이트
+                .attr("fill", d => d.color)
+                .style("opacity", d => (highlightDenomination === null || d.denomination === highlightDenomination) ? 1.0 : 0.4)
+                .on("mouseover", function (event, d) {
+                    d3.select(this).style("opacity", 0.7);
+                    showTooltip(event, d);
+                })
+                .on("mouseout", function (event, d) {
+                    // 마우스 아웃 시 원래 필터링 상태의 투명도로 복귀
+                    d3.select(this).style("opacity", (d.denomination === highlightDenomination || highlightDenomination === null) ? 1.0 : 0.4);
+                    hideTooltip();
+                })
+                .on("click", (event, d) => {
+                    filterMap(d.denomination); // 막대 그래프 클릭 시 지도 필터링
+                });
+
+            // Y축 (교회 개수)
+            svg.append("g")
+                .call(d3.axisLeft(y).tickFormat(d3.format("d"))); // 정수로 표시
+
+            // X축 (교단 이름) - 회전 적용
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x))
+                .selectAll("text")
+                .attr("transform", "rotate(-45)")
+                .style("text-anchor", "end")
+                .attr("dx", "-.8em")
+                .attr("dy", ".15em")
+                .style("font-size", "11px") // 글자 크기 조정
+                .style("fill", "#4b5563"); 
+
+            // 막대 위에 개수 텍스트 추가
+            svg.selectAll(".bar-label")
+                .data(denominationCounts)
+                .enter().append("text")
+                .attr("class", "bar-label")
+                .attr("x", d => x(d.denomination) + x.bandwidth() / 2)
+                .attr("y", d => y(d.count) - 5)
+                .attr("text-anchor", "middle")
+                .text(d => d.count);
+
+            // Responsive behavior: Redraw chart on resize
+            window.addEventListener('resize', () => {
+                drawBarChart(selectedDenomination); // 현재 필터 상태 유지
+            });
+        };
+
+
+        // --- 5. 초기 실행 ---
+        window.onload = () => {
+            initializeMap();
+            updateLegend();
+            drawBarChart();
+        };
+
+    </script>
+</body>
+</html>
